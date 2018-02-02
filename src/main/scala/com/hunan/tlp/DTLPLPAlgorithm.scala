@@ -6,7 +6,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.{Dataset, SparkSession}
 
-class DTLPLPAlgorithm(spark:SparkSession) {
+class DTLPLPAlgorithm(@transient spark:SparkSession) extends Serializable{
   import spark.implicits._
   /**
     * 生成时序信息图
@@ -16,7 +16,7 @@ class DTLPLPAlgorithm(spark:SparkSession) {
     */
   def getTemporalInfoGraph(graphFilePath:String,narrowIndex:Double,numberOfWindows:Int,timeFormat:String): Graph[Int, Double] = {
     import spark.implicits._
-    val rawData = spark.sparkContext.textFile(graphFilePath).map(_.split(",").map(_.stripPrefix("\"").stripSuffix("\"")))
+    val rawData = spark.sparkContext.textFile(graphFilePath,5).map(_.split(",").map(_.stripPrefix("\"").stripSuffix("\"")))
       .map(arr=>TEdge(math.min(arr(0).toLong,arr(1).toLong),math.max(arr(0).toLong,arr(1).toLong),TlpUtil.convertTimeStr(arr(2),timeFormat))).toDS.cache()
     val startTime = rawData.selectExpr("min(timestamp) as start").collect()(0).getAs[Long]("start")
     val endTime = rawData.selectExpr("max(timestamp) as end").collect()(0).getAs[Long]("end")
@@ -97,7 +97,7 @@ class DTLPLPAlgorithm(spark:SparkSession) {
     }
 
     def convertToEdgeScore(v:(VertexId, Array[(VertexId, Double)])): Array[LinkScore] ={
-      val list = for(e <- v._2 if v._1<e._1) yield LinkScore(v._1,e._1,e._2)
+      val list = for(e <- v._2 if v._1<e._1) yield LinkScore("node"+v._1,"node"+e._1,e._2)
       list
     }
 

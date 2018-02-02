@@ -15,7 +15,7 @@ object SearchCenter {
     //初始化节点标签
     val seedsVertex = seeds.map(vid=>(vid,true))
 
-    //确定每个节点的下一步搜索方向 todo 随机化？？
+    //确定每个节点的下一步搜索方向
     val direct: VertexRDD[Long] = densityGraph.aggregateMessages[(VertexId,Double)](
       ctx=>{
         if(ctx.dstAttr>ctx.srcAttr)

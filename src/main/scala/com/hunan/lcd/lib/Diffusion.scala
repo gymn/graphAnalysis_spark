@@ -18,6 +18,7 @@ object Diffusion {
     val neighbors: VertexRDD[Array[VertexId]] = graph.collectNeighborIds(EdgeDirection.Either)
     val degrees: VertexRDD[Int] = graph.aggregateMessages(ctx => { ctx.sendToSrc(ctx.attr); ctx.sendToDst(ctx.attr) }, _ + _,
       TripletFields.None)
+
     val graph2 = graph.outerJoinVertices(neighbors)((vid,data,u)=>{
       u match{
         case Some(u)=>DiffusionState(data.inCommunity,data.communityId,u)
@@ -30,28 +31,29 @@ object Diffusion {
       }
     })
 
-    val vertx_2: VertexRDD[CommunityState] = graph2.aggregateMessages[CommunityState](ctx=>{
+    val vertx_2: VertexRDD[CommunityState] = graph2.aggregateMessages[(CommunityState,Double)](ctx=>{
       if(ctx.dstAttr.inCommunity&&ctx.srcAttr.inCommunity){  //连边两端点均为社团点
         if(/*ctx.srcAttr.neignborIds.intersect(ctx.dstAttr.neignborIds).size>0&&*/  //6.20 delete condition:如果两个点有共同邻居
         ctx.attr.toDouble/(ctx.srcAttr.degree+ctx.dstAttr.degree-ctx.attr)>0.5) { //且两社团之间的连边占总连边比例大于阈值 todo 改变阈值
-          ctx.sendToDst(CommunityState(true, Math.min(ctx.dstId, ctx.srcId),0)) //如果两个社团点相邻且有三角关系则合并两个社团并以较小的社团id为id
-          ctx.sendToSrc(CommunityState(true, Math.min(ctx.dstId, ctx.srcId),0))
+          ctx.sendToDst((CommunityState(true, Math.min(ctx.dstId, ctx.srcId),0),0.5)) //如果两个社团点相邻且有三角关系则合并两个社团并以较小的社团id为id
+          ctx.sendToSrc((CommunityState(true, Math.min(ctx.dstId, ctx.srcId),0),0.5))
         }
       } else if(ctx.dstAttr.inCommunity){   //dst为社团点
-        //如果两个点有共同邻居
-        if(/*ctx.srcAttr.neignborIds.intersect(ctx.dstAttr.neignborIds).size>0&&*/
-        ctx.attr.toDouble/ctx.srcAttr.degree>threshold) {
-          ctx.sendToSrc(CommunityState(true, ctx.dstId,0))
+        if(ctx.attr.toDouble/ctx.srcAttr.degree>threshold) {
+          ctx.sendToSrc((CommunityState(true, ctx.dstId,0),ctx.attr.toDouble/ctx.srcAttr.degree))
         }
       }else if(ctx.srcAttr.inCommunity)  //src为社团点
-      //如果两个点有共同邻居
-        if(/*ctx.srcAttr.neignborIds.intersect(ctx.dstAttr.neignborIds).size>0&&*/
-          ctx.attr.toDouble/ctx.dstAttr.degree>threshold) {
-          ctx.sendToDst(CommunityState(true, ctx.srcId,0))
+        if(ctx.attr.toDouble/ctx.dstAttr.degree>threshold) {
+          ctx.sendToDst((CommunityState(true, ctx.srcId,0),ctx.attr.toDouble/ctx.srcAttr.degree))
         }
     },(c1,c2)=>{
-      CommunityState(true,Math.min(c1.communityId,c2.communityId),0)
-    })
+      if(c1._2==c2._2)
+        (CommunityState(true,Math.min(c1._1.communityId,c2._1.communityId),0),0.5)
+      else if(c1._2>c2._2)
+        (CommunityState(true,c1._1.communityId,0),c1._2)
+      else
+        (CommunityState(true,c2._1.communityId,0),c2._2)
+    }).mapValues(_._1)
 
     val graph3 = graph.outerJoinVertices(vertx_2)((vid,data,u)=>{
       u match {
@@ -70,7 +72,7 @@ object Diffusion {
     */
   def compress(graph: Graph[CommunityState,Int]): Graph[CommunityState,Int] ={
 
-    //所有未加入社团的节点以及这些节点间的连边
+    //所有未加入社团的节点以及这些节点间的连边,将这些连边的值设置为1
     val edgeRDD2 = graph.subgraph(et=>(!et.dstAttr.inCommunity)&&(!et.srcAttr.inCommunity),(vid,state)=>{
       !state.inCommunity
     }).edges.mapValues(_=>1)
@@ -97,7 +99,7 @@ object Diffusion {
 
     //vertices.collect().foreach(println)
 
-    val g = Graph(vertices,edgeRDD1.union(edgeRDD2).repartition(24))
+    val g = Graph(vertices.repartition(10),edgeRDD1.union(edgeRDD2).repartition(10))
 //    println("compress:")
 //    g.triplets.collect().foreach(println)
     g
